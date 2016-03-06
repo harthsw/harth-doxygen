@@ -8,6 +8,5 @@
 import sys
 sys.path.append("%%LIBDIR%%")
 
-from dep import main
+print "Hello World!"
 
-main.main()
