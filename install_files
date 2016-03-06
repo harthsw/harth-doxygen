@@ -1,0 +1,41 @@
+#!/bin/bash
+VERSION=$(git describe --tags 2>/dev/null || echo unknown)
+TARGET=harth-doxygen
+
+BINDIR="$1"
+LIBDIR="$2"
+shift 2
+
+for file in "$@"
+do
+    if [[ "$file" == "${TARGET}.py" ]]; then
+	src="$file"
+	dest="$BINDIR/$TARGET"
+    else
+	src="$file"
+	dest="$LIBDIR/$file"
+    fi
+    dir=$(dirname "$dest")
+    if [[ ! -d "$dir" ]]; then
+	mkdir -p "$dir"
+	chmod a+rx "$dir"
+    fi
+    echo "Installing $file to $dest..."
+    awk '/%%README%%/ {
+		while ((getline line < "README.md") > 0 && line !~ /^Copyright/)
+			printf("# %s\n", line);
+		next;
+	}
+	/%%LICENSE%%/ {
+		while ((getline line < "LICENSE") > 0)
+			printf("# %s\n", line);
+		next;
+	}
+	{
+		sub(/%%VERSION%%/, "'$VERSION'", $0);
+		sub(/%%LIBDIR%%/, "'$LIBDIR'", $0);
+		print $0;
+	}
+	' < "$src" > "$dest"
+	chmod a+r "$dest"
+done
