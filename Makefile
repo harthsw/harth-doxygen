@@ -12,8 +12,7 @@ install:
 	python -m compileall $(patsubst %,$(LIBDIR)/%,$(MODS))
 
 test:
-	@echo "ERROR: No tests!" >&2
-	@exit 1
+	python ./harth-doxygen.py
 
 release:
 	$(MAKE) release-create
