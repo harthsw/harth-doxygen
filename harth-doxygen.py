@@ -6,10 +6,108 @@
 # Harth-Doxygen Version %%VERSION%%
 #
 import sys
+import re
+import uuid
 import xml.etree.ElementTree as ET
 
 sys.path.append("%%LIBDIR%%")
 
+# --------------------------------------------------------------------------------
+# Helpers
+#
+
+class Name:
+    def __init__(self, name):
+        self.name = name
+
+    def str(self):
+        return self.name
+        
+    def __repr__(self):
+        return self.str()
+        
+class Path:
+    def __init__(self, pathstr):
+        pathstr = "/" + pathstr
+        p = re.split("::|/", pathstr)
+        self.names = [Name(n) for n in p]
+        self.path = "/".join(p)
+        self.name = self.names[-1]
+
+    def str(self):
+        return self.path
+
+    def __repr__(self):
+        return self.str()
+
+class Location:
+    def __init__(self, path, line, col):
+        self.path = path
+        self.line = line
+        self.column = col
+
+    def str(self):
+        return "{0}:{1}:{2}".format(self.path, self.line, self.column)
+
+    def __repr__(self):
+        return self.str()
+
+# RefId is used by Doxygen for def-ref links, suitable for HTML links or file names.
+# Locally unique
+class RefId:
+    def __init__(self, refid):
+        self.refid = refid
+
+    def str(self):
+        return self.refid
+
+    def __repr__(self):
+        return self.str()
+
+# GUID = Globally Unique Identifier
+# Globally unique
+class Guid:
+    def __init__(self):
+        self.guid = uuid.uuid1()
+
+    def str(self):
+        return str(self.guid)
+
+    def __repr__(self):
+        return repr(self.guid)
+    
+class Definition:
+    def __init__(self, refid, path, loc):
+        self.guid = Guid()
+        self.refid = refid
+        self.path = path
+        self.location = loc
+
+    @property
+    def name(self):
+        return self.path.name
+
+    def str(self):
+        return "Definition({0}, {1})".format(self.guid, self.path)
+
+    def __repr__(self):
+        return self.str()
+    
+class Reference:
+    def __init__(self, elem):
+        self.elem = elem
+        # TODO: Look up reference by refid, to find definition (and guid)        
+        self.guid = Guid()        
+        self.refid = RefId(elem.attrib["refid"])
+        self.kind = elem.attrib["kind"]
+        self.path = Path(elem.find("name").text)
+
+    def str(self):
+        return "Reference({0}, {1})".format(self.guid, self.path)
+
+    def __repr__(self):
+        return self.str()
+    
 # --------------------------------------------------------------------------------
 # Doxygen Index
 #
@@ -21,64 +119,11 @@ class DoxygenIndex:
         self.path = path
         self.tree = ET.parse(path)
         self.root = self.tree.getroot()
+        self.version = self.root.attrib["version"]
 
     @property
-    def version(self):
-        return self.root.attrib["version"]
-
-    @property
-    def compounds(self):
-        return self.root.iter("compound")
-
-    def dump(self, prefix=""):
-        print "{0}[{0}]".format(prefix, repr(self))
-        print "{0}Path: {1}".format(prefix, self.path)
-        print "{0}Version: {1}".format(prefix, self.version)
-        for c in self.compounds:
-            # TODO: FIX
-            compound = Compound(c)
-            compound.dump(prefix + "  ")
-
-class Compound:
-    def __init__(self, elem):
-        self.elem = elem
-
-    @property
-    def refid(self):
-        return self.elem.attrib["refid"]
-
-    @property
-    def kind(self):
-        return self.elem.attrib["kind"]
-
-    @property
-    def names(self):
-        return self.elem.findall("name")
-
-    def dump(self, prefix=""):
-        print "[{0}]".format(repr(self))
-        print "RefId:", self.refid
-        print "Kind:", self.kind
-        for c in self.names:
-            compound = Name(c)
-            compound.dump(prefix + "  ")
-    
-class Name(Compound):
-    def __init__(self, elem):
-        Compound.__init__(self, elem)
-
-    @property
-    def text(self):
-        return self.elem.text
-
-    @property    
-    def path(self):
-        return "/" + self.elem.text.replace("::", "/")
-
-    def dump(self, prefix=""):
-        print "[{0}]".format(repr(self))
-        print "Text:", self.text
-        print "Path:", self.path
+    def references(self):
+        return (Reference(e) for e in self.root.iter("compound"))
 
 # --------------------------------------------------------------------------------
 # Doxygen Definition Index
@@ -185,7 +230,7 @@ def print_namespace(c, prefix=""):
         for ic in ns.child_namespaces:
             print_namespace(ic, prefix + "  ")
             
-for c in index.compounds:
-    print_compound(c)
+for ref in index.references:
+    print ref
             
 sys.exit(0)
