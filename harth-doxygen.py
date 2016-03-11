@@ -84,7 +84,8 @@ class Guid:
         return repr(self.guid)
 
 class Element:
-    def __init__(self, elem, refid_key, name_key):
+    def __init__(self, index, elem, refid_key, name_key):
+        self.index = index
         self.elem = elem
         self.kind = elem.attrib["kind"]
         self.refid = RefId(elem.attrib[refid_key])
@@ -97,7 +98,8 @@ class Element:
         return self.str()
         
 class Index:
-    def __init__(self, xml_file):
+    def __init__(self, model, xml_file):
+        self.model = model
         self.path = os.path.join(xml_root, xml_file)
         if verbose:
             print "Reading \"{0}\"...".format(self.path)
@@ -112,30 +114,41 @@ class Index:
 # See: ~/Projects/harth-application/dep/harth-kernel/build/xml/compound.xsd
 #
 class DoxygenDefinitionIndex(Index):
-    def __init__(self, xml_file):
-        Index.__init__(self, xml_file)
+    def __init__(self, model, xml_file):
+        Index.__init__(self, model, xml_file)
         self.definitions = [self.make_definition(e) for e in self.root.iter("compounddef")]
 
     def make_definition(self, elem):
         kind = elem.attrib["kind"]
         if kind == "namespace":
-            return NamespaceDefinition(elem)
-        return CompoundDefinition(elem)
+            return NamespaceDefinition(self, elem)
+        return CompoundDefinition(self, elem)
 
 class Definition(Element):
-    def __init__(self, elem):
-        Element.__init__(self, elem, "id", "compoundname")
+    def __init__(self, index, elem):
+        Element.__init__(self, index, elem, "id", "compoundname")
         # self.guid = Guid()
         self.location = Location(elem.find("location"))
     
 class CompoundDefinition(Definition):
-    def __init__(self, elem):
-        Definition.__init__(self, elem)
+    def __init__(self, index, elem):
+        Definition.__init__(self, index, elem)
         self.language = self.elem.attrib.get("language")
     
 class NamespaceDefinition(CompoundDefinition):
-    def __init__(self, elem):
-        CompoundDefinition.__init__(self, elem)
+    def __init__(self, index, elem):
+        CompoundDefinition.__init__(self, index, elem)
+        self._child_namespaces = None
+
+    @property
+    def child_namespaces(self):
+        if self._child_namespaces is None:
+            self._child_namespaces = []
+            for ins in self.elem.findall("innernamespace"):
+                refid_text = ins.attrib["refid"]
+                ns_def = self.index.model.find_definition(refid_text)
+                self._child_namespaces.append(ns_def)
+        return self._child_namespaces
         
 # --------------------------------------------------------------------------------
 # Doxygen Reference Index
@@ -144,34 +157,34 @@ class NamespaceDefinition(CompoundDefinition):
 # See: ~/Projects/harth-application/dep/harth-kernel/build/xml/index.xsd
 
 class DoxygenReferenceIndex(Index):
-    def __init__(self, xml_file):
-        Index.__init__(self, xml_file)
+    def __init__(self, model, xml_file):
+        Index.__init__(self, model, xml_file)
         self.references = [self.make_reference(e) for e in self.root.iter("compound")]
 
     def make_reference(self, elem):
         kind = elem.attrib["kind"]
         if kind == "namespace":
-            return NamespaceReference(elem)
-        return CompoundReference(elem)
+            return NamespaceReference(self, elem)
+        return CompoundReference(self, elem)
 
 class Reference(Element):
-    def __init__(self, elem):
-        Element.__init__(self, elem, "refid", "name")
+    def __init__(self, index, elem):
+        Element.__init__(self, index, elem, "refid", "name")
         self.xml_path = self.refid.text + ".xml"
     
 class CompoundReference(Reference):
-    def __init__(self, elem):
-        Reference.__init__(self, elem)
+    def __init__(self, index, elem):
+        Reference.__init__(self, index, elem)
 
 class NamespaceReference(CompoundReference):
-    def __init__(self, elem):
-        CompoundReference.__init__(self, elem)
+    def __init__(self, index, elem):
+        CompoundReference.__init__(self, index, elem)
 
 # --------------------------------------------------------------------------------
 
 class DoxygenModel:
     def __init__(self):
-        self.ref_index = DoxygenReferenceIndex("index.xml")
+        self.ref_index = DoxygenReferenceIndex(self, "index.xml")
         self.definition_dict = {}
         for r in self.ref_index.references:
             self.add_definition_index(r)
@@ -181,17 +194,20 @@ class DoxygenModel:
         return self.definition_dict.itervalues()
 
     def make_definition_index(self, ref):
-        return DoxygenDefinitionIndex(ref.xml_path)
+        return DoxygenDefinitionIndex(self, ref.xml_path)
         
     def add_definition_index(self, ref):
         def_index = self.make_definition_index(ref)
         for d in def_index.definitions:
-            refid = d.refid.text
-            self.definition_dict[refid] = d
+            refid_text = d.refid.text
+            self.definition_dict[refid_text] = d
 
     @property
     def namespaces(self):
         return (d for d in self.definitions if d.kind == "namespace")
+
+    def find_definition(self, refid_text):
+        return self.definition_dict[refid_text]
     
 # --------------------------------------------------------------------------------
 
@@ -202,5 +218,6 @@ model = DoxygenModel()
 
 for ns in model.namespaces:
     print "{0}: {1}".format(ns.path, ns.location)
-    
+    for ins in ns.child_namespaces:
+        print "  {0}: {1}".format(ins.path, ins.location)
 sys.exit(0)
