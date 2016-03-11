@@ -122,37 +122,94 @@ class DoxygenDefinitionIndex(Index):
         kind = elem.attrib["kind"]
         if kind == "namespace":
             return NamespaceDefinition(self, elem)
+        elif kind == "class" or kind == "struct":
+            return ClassDefinition(self, elem)
+        elif kind == "function":
+            return FunctionDefinition(self, elem)
         return CompoundDefinition(self, elem)
 
 class Definition(Element):
-    def __init__(self, index, elem):
-        Element.__init__(self, index, elem, "id", "compoundname")
+    def __init__(self, index, elem, name_key="compoundname"):
+        Element.__init__(self, index, elem, "id", name_key)
         # self.guid = Guid()
         self.location = Location(elem.find("location"))
 
-    def build_definition_list(self, key_text):
+    def build_definition_list_by_refid(self, root_elem, key_text):
         defs = []
-        for ins in self.elem.findall(key_text):
+        for ins in root_elem.findall(key_text):
             refid_text = ins.attrib["refid"]
             d = self.index.model.find_definition(refid_text)
             defs.append(d)
         return defs
+
+    def build_definition_list(self, root_elem, key_text):
+        defs = []
+        for elem in root_elem.findall(key_text):
+            d = self.index.make_definition(elem)
+            defs.append(d)
+        return defs
     
 class CompoundDefinition(Definition):
-    def __init__(self, index, elem):
-        Definition.__init__(self, index, elem)
+    def __init__(self, index, elem, name_key="compoundname"):
+        Definition.__init__(self, index, elem, name_key)
         self.language = self.elem.attrib.get("language")
     
 class NamespaceDefinition(CompoundDefinition):
     def __init__(self, index, elem):
         CompoundDefinition.__init__(self, index, elem)
         self._child_namespaces = None
+        self._child_classes = None        
 
     @property
     def child_namespaces(self):
         if self._child_namespaces is None:
-            self._child_namespaces = self.build_definition_list("innernamespace")
+            self._child_namespaces = self.build_definition_list_by_refid(self.elem, "innernamespace")
         return self._child_namespaces
+
+    @property    
+    def child_classes(self):
+        if self._child_classes is None:
+            self._child_classes = self.build_definition_list_by_refid(self.elem, "innerclass")
+        return self._child_classes
+
+class ClassDefinition(CompoundDefinition):
+    def __init__(self, index, elem):
+        CompoundDefinition.__init__(self, index, elem)
+        self._child_functions = None
+
+    @property
+    def child_functions(self):
+        if self._child_functions is None:
+            self._child_functions = []
+            for sd in self.elem.findall("sectiondef"):
+                if sd.attrib["kind"] == "public-func":
+                    self._child_functions = self.build_definition_list(sd, "memberdef")
+        return self._child_functions
+        
+class FunctionDefinition(CompoundDefinition):
+    def __init__(self, index, elem):
+        CompoundDefinition.__init__(self, index, elem, "definition")
+        self.name = self.build_name(self.elem, "name")
+        self.return_type = self.build_type(self.elem, "type")
+        self.params = []
+        for p in elem.findall("param"):
+            param = self.build_param(p)
+            self.params.append(param)
+
+    def build_type(self, elem, key):
+        type_elem = elem.find(key)
+        ref_elem = type_elem.find("ref")
+        if ref_elem is None:
+            return type_elem.text
+        return ref_elem.text
+
+    def build_name(self, elem, key):
+        return elem.findtext(key, "_")
+
+    def build_param(self, elem):
+        param_type = self.build_type(elem, "type")
+        param_name = self.build_name(elem, "declname")
+        return (param_type, param_name)
         
 # --------------------------------------------------------------------------------
 # Doxygen Reference Index
@@ -169,6 +226,10 @@ class DoxygenReferenceIndex(Index):
         kind = elem.attrib["kind"]
         if kind == "namespace":
             return NamespaceReference(self, elem)
+        elif kind == "class" or kind == "struct":
+            return ClassReference(self, elem)
+        elif kind == "function":
+            return FunctionReference(self, elem)
         return CompoundReference(self, elem)
 
 class Reference(Element):
@@ -184,6 +245,14 @@ class NamespaceReference(CompoundReference):
     def __init__(self, index, elem):
         CompoundReference.__init__(self, index, elem)
 
+class ClassReference(CompoundReference):
+    def __init__(self, index, elem):
+        CompoundReference.__init__(self, index, elem)
+
+class FunctionReference(CompoundReference):
+    def __init__(self, index, elem):
+        CompoundReference.__init__(self, index, elem)
+        
 # --------------------------------------------------------------------------------
 
 class DoxygenModel:
@@ -220,12 +289,19 @@ verbose = False
 xml_root = "../harth-application/dep/harth-kernel/build/xml"
 model = DoxygenModel()
 
-# Namespaces
+print "\nNamespaces:"
 for ns in model.namespaces:
-    print "{0}: {1}".format(ns.path, ns.location)
+    print ns
     for ins in ns.child_namespaces:
-        print "  {0}: {1}".format(ins.path, ins.location)
-
-# Classes
+        print "  ", ins
+    for c in ns.child_classes:
+        print "    ", c
+        for f in c.child_functions:
+            print "      ", f
+            print "         ", f.name
+            print "         ", f.return_type
+            for p in f.params:
+                print "           ", p[0]
+                print "           ", p[1]                
 
 sys.exit(0)
