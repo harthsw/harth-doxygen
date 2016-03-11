@@ -84,12 +84,14 @@ class Guid:
         return repr(self.guid)
 
 class Element:
-    def __init__(self, index, elem, refid_key, name_key):
+    def __init__(self, index, elem, refid_key, path_key):
         self.index = index
         self.elem = elem
         self.kind = elem.attrib["kind"]
         self.refid = RefId(elem.attrib[refid_key])
-        self.path = Path(elem.find(name_key).text)
+        self.path = None        
+        if path_key is not None:
+            self.path = Path(elem.find(path_key).text)
 
     def str(self):
         return "{0}({1})".format(self.__class__.__name__, self.refid)
@@ -129,8 +131,8 @@ class DoxygenDefinitionIndex(Index):
         return CompoundDefinition(self, elem)
 
 class Definition(Element):
-    def __init__(self, index, elem, name_key="compoundname"):
-        Element.__init__(self, index, elem, "id", name_key)
+    def __init__(self, index, elem, path_key="compoundname"):
+        Element.__init__(self, index, elem, "id", path_key)
         # self.guid = Guid()
         self.location = Location(elem.find("location"))
 
@@ -150,8 +152,8 @@ class Definition(Element):
         return defs
     
 class CompoundDefinition(Definition):
-    def __init__(self, index, elem, name_key="compoundname"):
-        Definition.__init__(self, index, elem, name_key)
+    def __init__(self, index, elem, path_key="compoundname"):
+        Definition.__init__(self, index, elem, path_key)
         self.language = self.elem.attrib.get("language")
     
 class NamespaceDefinition(CompoundDefinition):
@@ -188,14 +190,18 @@ class ClassDefinition(CompoundDefinition):
         
 class FunctionDefinition(CompoundDefinition):
     def __init__(self, index, elem):
-        CompoundDefinition.__init__(self, index, elem, "definition")
-        self.name = self.build_name(self.elem, "name")
+        CompoundDefinition.__init__(self, index, elem, path_key=None)
+        self.path = self.build_path(self.elem, "name")
         self.return_type = self.build_type(self.elem, "type")
         self.params = []
         for p in elem.findall("param"):
             param = self.build_param(p)
             self.params.append(param)
 
+    def build_path(self, elem, key):
+        name_text = elem.find(key).text
+        return Name(name_text)
+        
     def build_type(self, elem, key):
         type_elem = elem.find(key)
         ref_elem = type_elem.find("ref")
@@ -204,7 +210,7 @@ class FunctionDefinition(CompoundDefinition):
         return ref_elem.text
 
     def build_name(self, elem, key):
-        return elem.findtext(key, "_")
+        return Name(elem.findtext(key, "_"))
 
     def build_param(self, elem):
         param_type = self.build_type(elem, "type")
@@ -298,8 +304,8 @@ for ns in model.namespaces:
         print "    ", c
         for f in c.child_functions:
             print "      ", f
-            print "         ", f.name
             print "         ", f.return_type
+            print "         ", f.path            
             for p in f.params:
                 print "           ", p[0]
                 print "           ", p[1]                
