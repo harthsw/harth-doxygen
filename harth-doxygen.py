@@ -129,6 +129,14 @@ class Definition(Element):
         Element.__init__(self, index, elem, "id", "compoundname")
         # self.guid = Guid()
         self.location = Location(elem.find("location"))
+
+    def build_definition_list(self, key_text):
+        defs = []
+        for ins in self.elem.findall(key_text):
+            refid_text = ins.attrib["refid"]
+            d = self.index.model.find_definition(refid_text)
+            defs.append(d)
+        return defs
     
 class CompoundDefinition(Definition):
     def __init__(self, index, elem):
@@ -143,11 +151,7 @@ class NamespaceDefinition(CompoundDefinition):
     @property
     def child_namespaces(self):
         if self._child_namespaces is None:
-            self._child_namespaces = []
-            for ins in self.elem.findall("innernamespace"):
-                refid_text = ins.attrib["refid"]
-                ns_def = self.index.model.find_definition(refid_text)
-                self._child_namespaces.append(ns_def)
+            self._child_namespaces = self.build_definition_list("innernamespace")
         return self._child_namespaces
         
 # --------------------------------------------------------------------------------
@@ -216,8 +220,12 @@ verbose = False
 xml_root = "../harth-application/dep/harth-kernel/build/xml"
 model = DoxygenModel()
 
+# Namespaces
 for ns in model.namespaces:
     print "{0}: {1}".format(ns.path, ns.location)
     for ins in ns.child_namespaces:
         print "  {0}: {1}".format(ins.path, ins.location)
+
+# Classes
+
 sys.exit(0)
