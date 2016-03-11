@@ -8,6 +8,7 @@
 import sys
 import re
 import uuid
+import os
 import xml.etree.ElementTree as ET
 
 sys.path.append("%%LIBDIR%%")
@@ -21,7 +22,7 @@ class Name:
         self.name = name
 
     def str(self):
-        return self.name
+        return "Name(\"{0}\")".format(self.name)
         
     def __repr__(self):
         return self.str()
@@ -31,23 +32,29 @@ class Path:
         pathstr = "/" + pathstr
         p = re.split("::|/", pathstr)
         self.names = [Name(n) for n in p]
-        self.path = "/".join(p)
+        self.text = "/".join(p)
         self.name = self.names[-1]
 
     def str(self):
-        return self.path
+        return "Path(\"{0}\")".format(self.text)
 
     def __repr__(self):
         return self.str()
 
 class Location:
-    def __init__(self, path, line, col):
-        self.path = path
-        self.line = line
-        self.column = col
+    def __init__(self, elem):
+        self.elem = elem
+        if elem is not None:
+            self.path = elem.attrib.get("file")
+            self.line = elem.attrib.get("line")
+            self.column = elem.attrib.get("column")
+        else:
+            self.path = None
+            self.line = None
+            self.column = None
 
     def str(self):
-        return "{0}:{1}:{2}".format(self.path, self.line, self.column)
+        return "Location(\"{0}:{1}:{2}\")".format(self.path, self.line, self.column)
 
     def __repr__(self):
         return self.str()
@@ -55,11 +62,11 @@ class Location:
 # RefId is used by Doxygen for def-ref links, suitable for HTML links or file names.
 # Locally unique
 class RefId:
-    def __init__(self, refid):
-        self.refid = refid
+    def __init__(self, text):
+        self.text = text
 
     def str(self):
-        return self.refid
+        return "RefId(\"{0}\")".format(self.text)
 
     def __repr__(self):
         return self.str()
@@ -75,55 +82,28 @@ class Guid:
 
     def __repr__(self):
         return repr(self.guid)
-    
-class Definition:
-    def __init__(self, refid, path, loc):
-        self.guid = Guid()
-        self.refid = refid
-        self.path = path
-        self.location = loc
 
-    @property
-    def name(self):
-        return self.path.name
-
-    def str(self):
-        return "Definition({0}, {1})".format(self.guid, self.path)
-
-    def __repr__(self):
-        return self.str()
-    
-class Reference:
-    def __init__(self, elem):
+class Element:
+    def __init__(self, elem, refid_key, name_key):
         self.elem = elem
-        # TODO: Look up reference by refid, to find definition (and guid)        
-        self.guid = Guid()        
-        self.refid = RefId(elem.attrib["refid"])
         self.kind = elem.attrib["kind"]
-        self.path = Path(elem.find("name").text)
+        self.refid = RefId(elem.attrib[refid_key])
+        self.path = Path(elem.find(name_key).text)
 
     def str(self):
-        return "Reference({0}, {1})".format(self.guid, self.path)
+        return "{0}({1})".format(self.__class__.__name__, self.refid)
 
     def __repr__(self):
         return self.str()
-    
-# --------------------------------------------------------------------------------
-# Doxygen Index
-#
-# Class names and strcture almost match those in Doxygen's XSD:
-# See: ~/Projects/harth-application/dep/harth-kernel/build/xml/index.xsd
-
-class DoxygenIndex:
-    def __init__(self, path):
-        self.path = path
-        self.tree = ET.parse(path)
+        
+class Index:
+    def __init__(self, xml_file):
+        self.path = os.path.join(xml_root, xml_file)
+        if verbose:
+            print "Reading \"{0}\"...".format(self.path)
+        self.tree = ET.parse(self.path)
         self.root = self.tree.getroot()
         self.version = self.root.attrib["version"]
-
-    @property
-    def references(self):
-        return (Reference(e) for e in self.root.iter("compound"))
 
 # --------------------------------------------------------------------------------
 # Doxygen Definition Index
@@ -131,106 +111,96 @@ class DoxygenIndex:
 # Class names and strcture almost match those in Doxygen's XSD:
 # See: ~/Projects/harth-application/dep/harth-kernel/build/xml/compound.xsd
 #
-class DoxygenDefIndex:
-    def __init__(self, path):
-        self.path = path
-        self.tree = ET.parse(path)
-        self.root = self.tree.getroot()
+class DoxygenDefinitionIndex(Index):
+    def __init__(self, xml_file):
+        Index.__init__(self, xml_file)
+        self.definitions = [self.make_definition(e) for e in self.root.iter("compounddef")]
 
-    @property
-    def version(self):
-        return self.root.attrib["version"]
-        
-    @property
-    def defs(self):
-        return self.root.iter("compounddef")
+    def make_definition(self, elem):
+        kind = elem.attrib["kind"]
+        if kind == "namespace":
+            return NamespaceDefinition(elem)
+        return CompoundDefinition(elem)
 
-    def dump(self, prefix=""):
-        print "[{0}]".format(repr(self))
-        print "Path:", self.path
-        print "Version:", self.version
-        for d in self.defs:
-            # TODO: Fix with factory
-            cd = CompoundDef(d)
-            cd.dump(prefix + "  ")
-
-class CompoundDef:
+class Definition(Element):
     def __init__(self, elem):
-        self.elem = elem
-
-    @property
-    def id(self):
-        return self.elem.attib["id"]
-        
-    @property
-    def name(self):
-        return Name(self.elem.find("compoundname"))
-
-    @property
-    def location(self):
-        return LocationDef(self.elem.find("location"))
-
-    def dump(self, prefix=""):
-        print "[{0}]".format(repr(self))
-        self.name.dump(prefix + "  ")
-        self.location.dump(prefix + "  ")
+        Element.__init__(self, elem, "id", "compoundname")
+        # self.guid = Guid()
+        self.location = Location(elem.find("location"))
     
-class LocationDef(CompoundDef):
+class CompoundDefinition(Definition):
     def __init__(self, elem):
-        CompoundDef.__init__(self, elem)
+        Definition.__init__(self, elem)
+        self.language = self.elem.attrib.get("language")
     
-    @property
-    def file(self):
-        return self.elem.attrib["file"]
-
-    @property
-    def line(self):
-        return self.elem.attrib["line"]
-
-    @property
-    def column(self):
-        return self.elem.attrib["column"]
-
-    def dump(self, prefix=""):
-        print "{0}[{1}]".format(prefix, repr(self))
-        print "{0}Location: {1}".format(prefix, self.file)
-        print "{0}Line: {1}".format(prefix, self.line)
-        print "{0}Column: {1}".format(prefix, self.column)
-
-class NamespaceDef(CompoundDef):
+class NamespaceDefinition(CompoundDefinition):
     def __init__(self, elem):
-        CompoundDef.__init__(self, elem)
-        self.elem = elem
+        CompoundDefinition.__init__(self, elem)
+        
+# --------------------------------------------------------------------------------
+# Doxygen Reference Index
+#
+# Class names and strcture almost match those in Doxygen's XSD:
+# See: ~/Projects/harth-application/dep/harth-kernel/build/xml/index.xsd
 
-    @property
-    def child_namespaces(self):
-        return self.elem.findall("innernamespace")
+class DoxygenReferenceIndex(Index):
+    def __init__(self, xml_file):
+        Index.__init__(self, xml_file)
+        self.references = [self.make_reference(e) for e in self.root.iter("compound")]
 
-    def dump(self, prefix=""):
-        print "[{0}]".format(repr(self))
+    def make_reference(self, elem):
+        kind = elem.attrib["kind"]
+        if kind == "namespace":
+            return NamespaceReference(elem)
+        return CompoundReference(elem)
+
+class Reference(Element):
+    def __init__(self, elem):
+        Element.__init__(self, elem, "refid", "name")
+        self.xml_path = self.refid.text + ".xml"
+    
+class CompoundReference(Reference):
+    def __init__(self, elem):
+        Reference.__init__(self, elem)
+
+class NamespaceReference(CompoundReference):
+    def __init__(self, elem):
+        CompoundReference.__init__(self, elem)
 
 # --------------------------------------------------------------------------------
 
+class DoxygenModel:
+    def __init__(self):
+        self.ref_index = DoxygenReferenceIndex("index.xml")
+        self.definition_dict = {}
+        for r in self.ref_index.references:
+            self.add_definition_index(r)
 
-index = DoxygenIndex("../harth-application/dep/harth-kernel/build/xml/index.xml")
+    @property
+    def definitions(self):
+        return self.definition_dict.itervalues()
 
-def print_compound(c, prefix=""):
-    comp = Compound(c)
-    if comp.kind == "namespace":
-        print_namespace(c, prefix)
+    def make_definition_index(self, ref):
+        return DoxygenDefinitionIndex(ref.xml_path)
+        
+    def add_definition_index(self, ref):
+        def_index = self.make_definition_index(ref)
+        for d in def_index.definitions:
+            refid = d.refid.text
+            self.definition_dict[refid] = d
 
-def print_namespace(c, prefix=""):
-    comp = Compound(c)
-    xml = "../harth-application/dep/harth-kernel/build/xml/{0}.xml".format(comp.refid)
-    def_index = DoxygenDefIndex(xml)
+    @property
+    def namespaces(self):
+        return (d for d in self.definitions if d.kind == "namespace")
+    
+# --------------------------------------------------------------------------------
 
-    for d in def_index.defs:
-        ns = NamespaceDef(d)
-        print "{0}:{1}: Error: namespace {3}".format(ns.location.file, ns.location.line, prefix, ns.name.path)
-        for ic in ns.child_namespaces:
-            print_namespace(ic, prefix + "  ")
-            
-for ref in index.references:
-    print ref
-            
+verbose = False
+# verbose = True
+xml_root = "../harth-application/dep/harth-kernel/build/xml"
+model = DoxygenModel()
+
+for ns in model.namespaces:
+    print "{0}: {1}".format(ns.path, ns.location)
+    
 sys.exit(0)
